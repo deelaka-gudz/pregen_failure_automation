@@ -95,7 +95,14 @@ def _fill_first_visible(
     raise RuntimeError(f"Could not find {description}.") from last_error
 
 
-def _click_pregen_failure(page: Page) -> None:
+def _click_pregen_failure(page: Page) -> int:
+    pregen_failure_count = _status_count(page, "#status_id_3009")
+    print(f"[INFO] Initial PreGen Failure count: {pregen_failure_count}")
+    if pregen_failure_count <= 0:
+        raise RuntimeError(
+            "PreGen Failure count must be greater than 0 before clicking."
+        )
+
     tile = page.locator(
         ".status.loadthis",
         has=page.locator("#status_id_3009"),
@@ -111,6 +118,7 @@ def _click_pregen_failure(page: Page) -> None:
     )
     page.wait_for_load_state("domcontentloaded")
     _wait_for_network_idle(page)
+    return pregen_failure_count
 
 
 def _select_all_orders_on_page(page: Page, force_reselect: bool = False) -> None:
@@ -286,6 +294,14 @@ def _wait_for_pregen_count_zero(
         if time.monotonic() >= deadline:
             raise RuntimeError("Timed out waiting for PreGen status count to become 0.")
         page.wait_for_timeout(poll_ms)
+
+
+def _verify_pregen_failure_count_greater_than_zero(page: Page) -> None:
+    _go_to_dashboard(page)
+    pregen_failure_count = _status_count(page, "#status_id_3009")
+    print(f"[INFO] Final PreGen Failure count: {pregen_failure_count}")
+    if pregen_failure_count <= 0:
+        raise RuntimeError("Final PreGen Failure count must be greater than 0.")
 
 
 class LoginFlow:
@@ -476,6 +492,9 @@ def run(config: Config) -> None:
 
             _wait_for_pregen_count_zero(page)
             _log_step("Step 10: Wait until PreGen status count is 0")
+
+            _verify_pregen_failure_count_greater_than_zero(page)
+            _log_step("Step 11: Verify PreGen Failure count is greater than 0")
 
             time.sleep(2)
         finally:

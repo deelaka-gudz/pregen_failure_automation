@@ -148,6 +148,18 @@ def _select_set_shipping_bulk_action(page: Page) -> None:
     )
 
 
+def _select_evri_24_non_pod_shipping(page: Page) -> None:
+    shipping_service = page.locator("select[name='set_shipping_method_requested']")
+    shipping_service.first.wait_for(state="visible", timeout=5000)
+    try:
+        shipping_service.first.select_option(
+            label="EvriCorporate - Evri 24 Non POD | Evri 24 Non POD",
+            timeout=5000,
+        )
+    except PlaywrightError:
+        shipping_service.first.select_option("28", timeout=5000)
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -321,6 +333,9 @@ def run(config: Config) -> None:
 
             _select_set_shipping_bulk_action(page)
             _log_step("Step 5: Select Set Shipping")
+
+            _select_evri_24_non_pod_shipping(page)
+            _log_step("Step 6: Select EvriCorporate Evri 24 Non POD")
 
             time.sleep(2)
         finally:

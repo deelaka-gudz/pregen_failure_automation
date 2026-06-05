@@ -138,6 +138,16 @@ def _open_bulk_action_dropdown(page: Page) -> None:
     )
 
 
+def _select_set_shipping_bulk_action(page: Page) -> None:
+    bulk_action = page.locator("select[name='bulk_action']")
+    bulk_action.first.wait_for(state="visible", timeout=5000)
+    bulk_action.first.select_option("set_shipping", timeout=5000)
+    page.locator("#shippingMethodRequested").first.wait_for(
+        state="visible",
+        timeout=5000,
+    )
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -308,6 +318,9 @@ def run(config: Config) -> None:
 
             _open_bulk_action_dropdown(page)
             _log_step("Step 4: Click Select Bulk Action")
+
+            _select_set_shipping_bulk_action(page)
+            _log_step("Step 5: Select Set Shipping")
 
             time.sleep(2)
         finally:

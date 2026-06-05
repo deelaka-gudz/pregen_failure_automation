@@ -95,6 +95,24 @@ def _fill_first_visible(
     raise RuntimeError(f"Could not find {description}.") from last_error
 
 
+def _click_pregen_failure(page: Page) -> None:
+    tile = page.locator(
+        ".status.loadthis",
+        has=page.locator("#status_id_3009"),
+    ).filter(has_text=re.compile(r"\bPreGen Failure\b", re.I))
+
+    _click_first_visible(
+        [
+            tile,
+            page.locator("#status_id_3009").locator("..").locator(".."),
+            page.get_by_text(re.compile(r"\bPreGen Failure\b", re.I)).locator(".."),
+        ],
+        "PreGen Failure status",
+    )
+    page.wait_for_load_state("domcontentloaded")
+    _wait_for_network_idle(page)
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -256,6 +274,9 @@ def run(config: Config) -> None:
             page.wait_for_load_state("domcontentloaded")
             login.verify()
             _log_step("Step 1: Login to Helm")
+
+            _click_pregen_failure(page)
+            _log_step("Step 2: Click Pregen failure")
 
             time.sleep(2)
         finally:

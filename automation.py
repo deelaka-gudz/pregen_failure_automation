@@ -198,6 +198,11 @@ def _set_status_as_pregen(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
+def _go_to_dashboard(page: Page) -> None:
+    page.goto("https://mybeautyandcareltd1.myhelm.app/", wait_until="load")
+    _wait_for_network_idle(page)
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -383,6 +388,9 @@ def run(config: Config) -> None:
 
             _set_status_as_pregen(page)
             _log_step("Step 9: Click Set as PreGen")
+
+            _go_to_dashboard(page)
+            _log_step("Step 10: Go back to dashboard")
 
             time.sleep(2)
         finally:

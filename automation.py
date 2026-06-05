@@ -113,6 +113,31 @@ def _click_pregen_failure(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
+def _select_all_orders_on_page(page: Page) -> None:
+    checkbox = page.locator("input.check-all-on-page.processible[type='checkbox']")
+    checkbox.first.wait_for(state="visible", timeout=5000)
+    if not checkbox.first.is_checked(timeout=5000):
+        checkbox.first.click(timeout=5000)
+
+
+def _open_bulk_action_dropdown(page: Page) -> None:
+    dropdown = page.locator(
+        ".custom-dropdown[data-dropdown='bulk-action']",
+        has=page.locator("button.custom-dropdown__trigger"),
+    )
+    _click_first_visible(
+        [
+            dropdown.locator("button.custom-dropdown__trigger"),
+            page.get_by_role("button", name=re.compile(r"Select Bulk Action", re.I)),
+        ],
+        "Select Bulk Action dropdown",
+    )
+    dropdown.locator(".custom-dropdown__content").first.wait_for(
+        state="visible",
+        timeout=5000,
+    )
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -277,6 +302,12 @@ def run(config: Config) -> None:
 
             _click_pregen_failure(page)
             _log_step("Step 2: Click Pregen failure")
+
+            _select_all_orders_on_page(page)
+            _log_step("Step 3: Click select all on page checkbox")
+
+            _open_bulk_action_dropdown(page)
+            _log_step("Step 4: Click Select Bulk Action")
 
             time.sleep(2)
         finally:

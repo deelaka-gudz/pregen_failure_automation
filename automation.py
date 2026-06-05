@@ -296,12 +296,13 @@ def _wait_for_pregen_count_zero(
         page.wait_for_timeout(poll_ms)
 
 
-def _verify_pregen_failure_count_greater_than_zero(page: Page) -> None:
+def _verify_pregen_failure_count_greater_than_zero(page: Page) -> int:
     _go_to_dashboard(page)
     pregen_failure_count = _status_count(page, "#status_id_3009")
     print(f"[INFO] Final PreGen Failure count: {pregen_failure_count}")
     if pregen_failure_count <= 0:
         raise RuntimeError("Final PreGen Failure count must be greater than 0.")
+    return pregen_failure_count
 
 
 class LoginFlow:
@@ -493,8 +494,23 @@ def run(config: Config) -> None:
             _wait_for_pregen_count_zero(page)
             _log_step("Step 10: Wait until PreGen status count is 0")
 
-            _verify_pregen_failure_count_greater_than_zero(page)
+            final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
+                page
+            )
             _log_step("Step 11: Verify PreGen Failure count is greater than 0")
+
+            if final_pregen_failure_count > 0:
+                _click_pregen_failure(page)
+                _log_step("Step 12: Click Pregen failure")
+
+                _select_all_orders_on_page(page)
+                _log_step("Step 13: Click select all on page checkbox")
+
+                _open_bulk_action_dropdown(page)
+                _log_step("Step 14: Click Select Bulk Action")
+
+                _select_set_shipping_bulk_action(page)
+                _log_step("Step 15: Select Set Shipping")
 
             time.sleep(2)
         finally:

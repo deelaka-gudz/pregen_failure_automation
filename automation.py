@@ -113,9 +113,13 @@ def _click_pregen_failure(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
-def _select_all_orders_on_page(page: Page) -> None:
+def _select_all_orders_on_page(page: Page, force_reselect: bool = False) -> None:
     checkbox = page.locator("input.check-all-on-page.processible[type='checkbox']")
     checkbox.first.wait_for(state="visible", timeout=5000)
+    checkbox.first.scroll_into_view_if_needed(timeout=5000)
+    if force_reselect and checkbox.first.is_checked(timeout=5000):
+        checkbox.first.click(timeout=5000)
+        page.wait_for_timeout(500)
     if not checkbox.first.is_checked(timeout=5000):
         checkbox.first.click(timeout=5000)
 
@@ -169,6 +173,28 @@ def _submit_bulk_action(page: Page) -> None:
         ],
         "Submit Action button",
     )
+    _wait_for_network_idle(page)
+
+
+def _set_status_as_pregen(page: Page) -> None:
+    dropdown = page.locator(".custom-dropdown[data-dropdown='set_status']")
+    _click_first_visible(
+        [
+            dropdown.locator("button.custom-dropdown__trigger"),
+            page.get_by_role("button", name=re.compile(r"Set Status", re.I)),
+        ],
+        "Set Status dropdown",
+    )
+    dropdown.locator(".custom-dropdown__content").first.wait_for(
+        state="visible",
+        timeout=5000,
+    )
+    set_pregen = dropdown.locator("a.set-status-button[data-status-id='3003']")
+    try:
+        set_pregen.first.wait_for(state="visible", timeout=2000)
+        set_pregen.first.click(timeout=5000)
+    except (PlaywrightTimeoutError, PlaywrightError):
+        set_pregen.first.evaluate("element => element.click()")
     _wait_for_network_idle(page)
 
 
@@ -351,6 +377,12 @@ def run(config: Config) -> None:
 
             _submit_bulk_action(page)
             _log_step("Step 7: Click Submit Action")
+
+            _select_all_orders_on_page(page, force_reselect=True)
+            _log_step("Step 8: Click select all on page checkbox")
+
+            _set_status_as_pregen(page)
+            _log_step("Step 9: Click Set as PreGen")
 
             time.sleep(2)
         finally:

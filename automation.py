@@ -164,6 +164,67 @@ def _select_evri_24_non_pod_shipping(page: Page) -> None:
         shipping_service.first.select_option("28", timeout=5000)
 
 
+def _wait_for_progress_loader(page: Page, timeout_ms: int = 10 * 60 * 1000) -> None:
+    processing_modal = page.get_by_text(
+        re.compile(r"Selected orders are processing", re.I)
+    )
+    loader_selector = ", ".join(
+        [
+            ".progress",
+            ".progress-bar",
+            ".progress-striped",
+            ".loading",
+            ".loader",
+            ".preloader",
+            ".spinner",
+            ".fa-spinner",
+            ".blockUI",
+            ".blockOverlay",
+            "[class*='loader']",
+            "[class*='loading']",
+            "[class*='progress']",
+            "[id*='loader']",
+            "[id*='loading']",
+            "[id*='progress']",
+        ]
+    )
+
+    try:
+        processing_modal.first.wait_for(state="visible", timeout=10000)
+    except PlaywrightTimeoutError:
+        try:
+            page.locator(loader_selector).first.wait_for(
+                state="visible",
+                timeout=10000,
+            )
+        except PlaywrightTimeoutError:
+            page.wait_for_timeout(2000)
+            return
+
+    try:
+        processing_modal.first.wait_for(state="hidden", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        raise RuntimeError(
+            "Timed out waiting for the selected orders processing modal to finish."
+        )
+
+    page.wait_for_function(
+        """
+        selector => !Array.from(document.querySelectorAll(selector)).some(element => {
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && Number(style.opacity) !== 0
+                && rect.width > 0
+                && rect.height > 0;
+        })
+        """,
+        arg=loader_selector,
+        timeout=timeout_ms,
+    )
+
+
 def _submit_bulk_action(page: Page) -> None:
     dropdown = page.locator(".custom-dropdown[data-dropdown='bulk-action']")
     _click_first_visible(
@@ -173,6 +234,7 @@ def _submit_bulk_action(page: Page) -> None:
         ],
         "Submit Action button",
     )
+    _wait_for_progress_loader(page)
     _wait_for_network_idle(page)
 
 
@@ -222,9 +284,7 @@ def _wait_for_pregen_count_zero(
         if pregen_count == 0:
             return
         if time.monotonic() >= deadline:
-            raise RuntimeError(
-                "Timed out waiting for PreGen status count to become 0."
-            )
+            raise RuntimeError("Timed out waiting for PreGen status count to become 0.")
         page.wait_for_timeout(poll_ms)
 
 

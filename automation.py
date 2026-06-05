@@ -160,6 +160,18 @@ def _select_evri_24_non_pod_shipping(page: Page) -> None:
         shipping_service.first.select_option("28", timeout=5000)
 
 
+def _submit_bulk_action(page: Page) -> None:
+    dropdown = page.locator(".custom-dropdown[data-dropdown='bulk-action']")
+    _click_first_visible(
+        [
+            dropdown.get_by_role("button", name=re.compile(r"Submit Action", re.I)),
+            dropdown.locator("button[onclick='startBulkAction()']"),
+        ],
+        "Submit Action button",
+    )
+    _wait_for_network_idle(page)
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -336,6 +348,9 @@ def run(config: Config) -> None:
 
             _select_evri_24_non_pod_shipping(page)
             _log_step("Step 6: Select EvriCorporate Evri 24 Non POD")
+
+            _submit_bulk_action(page)
+            _log_step("Step 7: Click Submit Action")
 
             time.sleep(2)
         finally:

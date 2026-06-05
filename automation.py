@@ -203,6 +203,31 @@ def _go_to_dashboard(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
+def _status_count(page: Page, selector: str) -> int:
+    raw_count = page.locator(selector).first.text_content(timeout=5000) or ""
+    count = re.sub(r"[^\d]", "", raw_count)
+    return int(count or "0")
+
+
+def _wait_for_pregen_count_zero(
+    page: Page,
+    timeout_ms: int = 30 * 60 * 1000,
+    poll_ms: int = 5000,
+) -> None:
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while True:
+        _go_to_dashboard(page)
+        pregen_count = _status_count(page, "#status_id_3003")
+        print(f"[INFO] PreGen status count: {pregen_count}")
+        if pregen_count == 0:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "Timed out waiting for PreGen status count to become 0."
+            )
+        page.wait_for_timeout(poll_ms)
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -389,8 +414,8 @@ def run(config: Config) -> None:
             _set_status_as_pregen(page)
             _log_step("Step 9: Click Set as PreGen")
 
-            _go_to_dashboard(page)
-            _log_step("Step 10: Go back to dashboard")
+            _wait_for_pregen_count_zero(page)
+            _log_step("Step 10: Wait until PreGen status count is 0")
 
             time.sleep(2)
         finally:

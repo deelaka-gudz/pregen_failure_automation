@@ -147,6 +147,64 @@ def _click_first_order_id(page: Page) -> None:
     _wait_for_network_idle(page)
 
 
+def _collect_order_links(page: Page) -> list[dict[str, str]]:
+    links = page.evaluate("""
+        () => {
+            const anchors = Array.from(document.querySelectorAll(
+                "tbody tr.has-second-row a[href*='/orders/edit?id=']"
+            ));
+            const seen = new Set();
+            return anchors
+                .map(anchor => ({
+                    href: anchor.getAttribute("href") || "",
+                    order_id: (anchor.textContent || "").replace(/\\s+/g, " ").trim(),
+                }))
+                .filter(order => {
+                    if (!order.href || seen.has(order.href)) {
+                        return false;
+                    }
+                    seen.add(order.href);
+                    return true;
+                });
+        }
+        """)
+    if not links:
+        raise RuntimeError("Could not find any order ID links on the orders page.")
+    print(f"[INFO] Found {len(links)} PreGen Failure order row(s).")
+    return links
+
+
+def _open_order_link(page: Page, order: dict[str, str]) -> None:
+    href = order["href"]
+    url = (
+        href
+        if href.startswith("http")
+        else f"https://mybeautyandcareltd1.myhelm.app{href}"
+    )
+    print(f"[INFO] Opening order ID: {order['order_id']}")
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    _wait_for_network_idle(page)
+
+
+def _process_pregen_failure_order(
+    page: Page, order: dict[str, str], index: int
+) -> None:
+    _open_order_link(page, order)
+    _log_step(f"Step 23[{index}]: Open order ID {order['order_id']}")
+
+    _verify_pregen_label_error_exists(page)
+    _log_step(f"Step 23.1[{index}]: Verify Pregenerated Labels Plugin error")
+
+    _reselect_duplicate_shipping_method(page)
+    _log_step(f"Step 23.2[{index}]: Reselect duplicate shipping method")
+
+    _click_visible_toggle_or_retry_shipping(page)
+    _log_step(f"Step 23.3[{index}]: Click visible toggle button")
+
+    _select_order_status_pregen(page)
+    _log_step(f"Step 23.4[{index}]: Select PreGen status")
+
+
 def _verify_pregen_label_error_exists(page: Page) -> None:
     error_message = (
         "PregenLabel couldn't created by Pregenerated Labels Plugin because "
@@ -721,20 +779,9 @@ def run(config: Config) -> None:
                 if _click_pregen_failure_if_count_greater_than_zero(page):
                     _log_step("Step 22: Click Pregen failure")
 
-                    _click_first_order_id(page)
-                    _log_step("Step 23: Click first order ID")
-
-                    _verify_pregen_label_error_exists(page)
-                    _log_step("Step 23.1: Verify Pregenerated Labels Plugin error")
-
-                    _reselect_duplicate_shipping_method(page)
-                    _log_step("Step 23.2: Reselect duplicate shipping method")
-
-                    _click_visible_toggle_or_retry_shipping(page)
-                    _log_step("Step 23.3: Click visible toggle button")
-
-                    _select_order_status_pregen(page)
-                    _log_step("Step 23.4: Select PreGen status")
+                    orders = _collect_order_links(page)
+                    for index, order in enumerate(orders, start=1):
+                        _process_pregen_failure_order(page, order, index)
 
             time.sleep(2)
         finally:

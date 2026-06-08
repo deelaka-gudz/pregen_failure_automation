@@ -175,8 +175,7 @@ def _select_evri_24_non_pod_shipping(page: Page) -> None:
 def _select_royal_mail_tracked_48_no_signature(page: Page) -> None:
     shipping_service = page.locator("select[name='set_shipping_method_requested']")
     shipping_service.first.wait_for(state="visible", timeout=5000)
-    shipping_service.first.evaluate(
-        """
+    shipping_service.first.evaluate("""
         select => {
             const target = "RoyalMailClickAndDrop \\u2013 RMCD Tracked 48 (TPS48)- No Signature | RMCD Tracked 48 (TPS48)- No Signature";
             const normalize = value => value
@@ -192,8 +191,7 @@ def _select_royal_mail_tracked_48_no_signature(page: Page) -> None:
             select.dispatchEvent(new Event("input", { bubbles: true }));
             select.dispatchEvent(new Event("change", { bubbles: true }));
         }
-        """
-    )
+        """)
 
 
 def _wait_for_progress_loader(page: Page, timeout_ms: int = 10 * 60 * 1000) -> None:
@@ -306,9 +304,48 @@ def _go_to_dashboard(page: Page) -> None:
 
 
 def _status_count(page: Page, selector: str) -> int:
-    raw_count = page.locator(selector).first.text_content(timeout=5000) or ""
+    try:
+        raw_count = page.locator(selector).first.text_content(timeout=10000) or ""
+    except (PlaywrightTimeoutError, PlaywrightError):
+        status_names = {
+            "#status_id_3003": "PreGen",
+            "#status_id_3009": "PreGen Failure",
+        }
+        status_name = status_names.get(selector)
+        if not status_name:
+            raise
+        return _dashboard_status_count_by_name(page, status_name)
     count = re.sub(r"[^\d]", "", raw_count)
     return int(count or "0")
+
+
+def _dashboard_status_count_by_name(page: Page, status_name: str) -> int:
+    return page.evaluate(
+        """
+        statusName => {
+            const normalize = value => value.replace(/\\s+/g, " ").trim();
+            const labels = Array.from(document.querySelectorAll("p, span, div"))
+                .filter(element => normalize(element.textContent || "") === statusName);
+
+            for (const label of labels) {
+                let node = label.parentElement;
+                for (let depth = 0; node && depth < 6; depth += 1, node = node.parentElement) {
+                    const text = normalize(node.textContent || "");
+                    if (!text.includes(statusName)) {
+                        continue;
+                    }
+                    const numbers = text.match(/\\b\\d+\\b/g);
+                    if (numbers && numbers.length > 0) {
+                        return Number(numbers[0]);
+                    }
+                }
+            }
+
+            throw new Error(`Could not find dashboard status count for ${statusName}`);
+        }
+        """,
+        status_name,
+    )
 
 
 def _wait_for_pregen_count_zero(
@@ -556,11 +593,17 @@ def run(config: Config) -> None:
                 _select_royal_mail_tracked_48_no_signature(page)
                 _log_step("Step 16: Select RoyalMailClickAndDrop RMCD Tracked 48")
 
+                _submit_bulk_action(page)
+                _log_step("Step 17: Click Submit Action")
+
                 _select_all_orders_on_page(page, force_reselect=True)
-                _log_step("Step 17: Click select all on page checkbox")
+                _log_step("Step 18: Click select all on page checkbox")
 
                 _set_status_as_pregen(page)
-                _log_step("Step 18: Click Set as PreGen")
+                _log_step("Step 19: Click Set as PreGen")
+
+                _wait_for_pregen_count_zero(page)
+                _log_step("Step 20: Wait until PreGen status count is 0")
 
             time.sleep(2)
         finally:

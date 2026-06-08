@@ -172,6 +172,30 @@ def _select_evri_24_non_pod_shipping(page: Page) -> None:
         shipping_service.first.select_option("28", timeout=5000)
 
 
+def _select_royal_mail_tracked_48_no_signature(page: Page) -> None:
+    shipping_service = page.locator("select[name='set_shipping_method_requested']")
+    shipping_service.first.wait_for(state="visible", timeout=5000)
+    shipping_service.first.evaluate(
+        """
+        select => {
+            const target = "RoyalMailClickAndDrop \\u2013 RMCD Tracked 48 (TPS48)- No Signature | RMCD Tracked 48 (TPS48)- No Signature";
+            const normalize = value => value
+                .replace(/[\\u2013\\u2014-]/g, "-")
+                .replace(/\\s+/g, " ")
+                .trim();
+            const options = Array.from(select.options);
+            const option = options.find(item => normalize(item.textContent) === normalize(target));
+            if (!option) {
+                throw new Error(`Could not find shipping service: ${target}`);
+            }
+            select.selectedIndex = options.indexOf(option);
+            select.dispatchEvent(new Event("input", { bubbles: true }));
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        """
+    )
+
+
 def _wait_for_progress_loader(page: Page, timeout_ms: int = 10 * 60 * 1000) -> None:
     processing_modal = page.get_by_text(
         re.compile(r"Selected orders are processing", re.I)
@@ -269,7 +293,15 @@ def _set_status_as_pregen(page: Page) -> None:
 
 
 def _go_to_dashboard(page: Page) -> None:
-    page.goto("https://mybeautyandcareltd1.myhelm.app/", wait_until="load")
+    try:
+        page.goto(
+            "https://mybeautyandcareltd1.myhelm.app/",
+            wait_until="domcontentloaded",
+            timeout=60000,
+        )
+    except PlaywrightTimeoutError:
+        if page.locator("#status_id_3003").count() == 0:
+            raise
     _wait_for_network_idle(page)
 
 
@@ -286,7 +318,16 @@ def _wait_for_pregen_count_zero(
 ) -> None:
     deadline = time.monotonic() + (timeout_ms / 1000)
     while True:
-        _go_to_dashboard(page)
+        try:
+            _go_to_dashboard(page)
+        except PlaywrightTimeoutError:
+            print("[INFO] Dashboard load timed out; retrying...")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "Timed out waiting for dashboard while checking PreGen count."
+                )
+            page.wait_for_timeout(poll_ms)
+            continue
         pregen_count = _status_count(page, "#status_id_3003")
         print(f"[INFO] PreGen status count: {pregen_count}")
         if pregen_count == 0:
@@ -511,6 +552,15 @@ def run(config: Config) -> None:
 
                 _select_set_shipping_bulk_action(page)
                 _log_step("Step 15: Select Set Shipping")
+
+                _select_royal_mail_tracked_48_no_signature(page)
+                _log_step("Step 16: Select RoyalMailClickAndDrop RMCD Tracked 48")
+
+                _select_all_orders_on_page(page, force_reselect=True)
+                _log_step("Step 17: Click select all on page checkbox")
+
+                _set_status_as_pregen(page)
+                _log_step("Step 18: Click Set as PreGen")
 
             time.sleep(2)
         finally:

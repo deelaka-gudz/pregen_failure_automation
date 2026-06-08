@@ -121,6 +121,102 @@ def _click_pregen_failure(page: Page) -> int:
     return pregen_failure_count
 
 
+def _click_pregen_failure_if_count_greater_than_zero(page: Page) -> bool:
+    pregen_failure_count = _status_count(page, "#status_id_3009")
+    print(f"[INFO] PreGen Failure count after dashboard return: {pregen_failure_count}")
+    if pregen_failure_count <= 0:
+        return False
+
+    _click_pregen_failure(page)
+    return True
+
+
+def _click_first_order_id(page: Page) -> None:
+    order_link = page.locator(
+        "tbody tr.has-second-row a[href^='/orders/edit?id='], "
+        "tbody tr.has-second-row a[href*='/orders/edit?id='], "
+        "a[href^='/orders/edit?id='], "
+        "a[href*='/orders/edit?id=']"
+    ).first
+    order_link.wait_for(state="visible", timeout=5000)
+    order_id = re.sub(r"\s+", " ", order_link.text_content(timeout=5000) or "").strip()
+    print(f"[INFO] Opening order ID: {order_id}")
+    order_link.evaluate("element => element.removeAttribute('target')")
+    order_link.click(timeout=5000)
+    page.wait_for_load_state("domcontentloaded")
+    _wait_for_network_idle(page)
+
+
+def _verify_pregen_label_error_exists(page: Page) -> None:
+    error_message = (
+        "PregenLabel couldn't created by Pregenerated Labels Plugin because "
+        "courier service cannot be selected!"
+    )
+    page.locator("td", has_text=error_message).first.wait_for(
+        state="visible",
+        timeout=10000,
+    )
+
+
+def _reselect_duplicate_shipping_method(page: Page) -> None:
+    shipping_method = page.locator("select[name='shipping_method_requested']")
+    shipping_method.first.wait_for(state="visible", timeout=10000)
+    selected_text = shipping_method.first.evaluate("""
+        select => select.options[select.selectedIndex]?.textContent || ""
+        """)
+    print(f"[INFO] Existing shipping method: {selected_text.strip()}")
+    shipping_method.first.evaluate("""
+        select => {
+            const normalize = value => value
+                .replace(/\\s+/g, " ")
+                .replace(/^[^~]+~\\s*/, "")
+                .trim();
+            const selected = select.options[select.selectedIndex];
+            const selectedMethod = normalize(selected?.textContent || selected?.value || "");
+            const options = Array.from(select.options);
+            const duplicate = options.find(option => {
+                const group = option.closest("optgroup");
+                return group
+                    && group.label === "All Courier Services"
+                    && normalize(option.textContent || option.value || "") === selectedMethod;
+            });
+
+            if (!duplicate) {
+                throw new Error(`Could not find duplicate courier service for ${selectedMethod}`);
+            }
+
+            select.value = duplicate.value;
+            select.dispatchEvent(new Event("input", { bubbles: true }));
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        """)
+    _wait_for_network_idle(page)
+
+
+def _click_visible_toggle_or_retry_shipping(page: Page) -> None:
+    toggle = (
+        page.locator(".toggle-group")
+        .filter(has=page.locator(".toggle-on", has_text=re.compile(r"\bOn\b", re.I)))
+        .filter(has=page.locator(".toggle-off", has_text=re.compile(r"\bOff\b", re.I)))
+    )
+
+    try:
+        toggle.first.wait_for(state="visible", timeout=5000)
+    except PlaywrightTimeoutError:
+        _reselect_duplicate_shipping_method(page)
+        toggle.first.wait_for(state="visible", timeout=10000)
+
+    toggle.first.click(timeout=5000)
+    _wait_for_network_idle(page)
+
+
+def _select_order_status_pregen(page: Page) -> None:
+    status = page.locator("select[name='status_id']")
+    status.first.wait_for(state="visible", timeout=10000)
+    status.first.select_option("3003", timeout=5000)
+    _wait_for_network_idle(page)
+
+
 def _select_all_orders_on_page(page: Page, force_reselect: bool = False) -> None:
     checkbox = page.locator("input.check-all-on-page.processible[type='checkbox']")
     checkbox.first.wait_for(state="visible", timeout=5000)
@@ -300,6 +396,20 @@ def _go_to_dashboard(page: Page) -> None:
     except PlaywrightTimeoutError:
         if page.locator("#status_id_3003").count() == 0:
             raise
+    _wait_for_network_idle(page)
+
+
+def _click_dashboard_sidebar_link(page: Page) -> None:
+    _click_first_visible(
+        [
+            page.locator("#widget-sidebar a[href='/']").filter(
+                has_text=re.compile(r"\bDashboard\b", re.I)
+            ),
+            page.get_by_role("link", name=re.compile(r"\bDashboard\b", re.I)),
+        ],
+        "Dashboard sidebar link",
+    )
+    page.wait_for_load_state("domcontentloaded")
     _wait_for_network_idle(page)
 
 
@@ -604,6 +714,27 @@ def run(config: Config) -> None:
 
                 _wait_for_pregen_count_zero(page)
                 _log_step("Step 20: Wait until PreGen status count is 0")
+
+                _click_dashboard_sidebar_link(page)
+                _log_step("Step 21: Click Dashboard sidebar link")
+
+                if _click_pregen_failure_if_count_greater_than_zero(page):
+                    _log_step("Step 22: Click Pregen failure")
+
+                    _click_first_order_id(page)
+                    _log_step("Step 23: Click first order ID")
+
+                    _verify_pregen_label_error_exists(page)
+                    _log_step("Step 23.1: Verify Pregenerated Labels Plugin error")
+
+                    _reselect_duplicate_shipping_method(page)
+                    _log_step("Step 23.2: Reselect duplicate shipping method")
+
+                    _click_visible_toggle_or_retry_shipping(page)
+                    _log_step("Step 23.3: Click visible toggle button")
+
+                    _select_order_status_pregen(page)
+                    _log_step("Step 23.4: Select PreGen status")
 
             time.sleep(2)
         finally:

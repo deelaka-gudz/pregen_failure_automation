@@ -59,6 +59,10 @@ def stream_process_logs(status_placeholder, log_placeholder) -> None:
         if line:
             for log_line in line.rstrip("\r\n").splitlines() or [""]:
                 st.session_state.logs.append(log_line)
+                if log_line.startswith("[WARNING]"):
+                    st.session_state.warning_message = log_line.removeprefix(
+                        "[WARNING]"
+                    ).strip()
             render_logs(log_placeholder)
             continue
 
@@ -67,6 +71,10 @@ def stream_process_logs(status_placeholder, log_placeholder) -> None:
             for remaining_line in process.stdout:
                 for log_line in remaining_line.rstrip("\r\n").splitlines() or [""]:
                     st.session_state.logs.append(log_line)
+                    if log_line.startswith("[WARNING]"):
+                        st.session_state.warning_message = log_line.removeprefix(
+                            "[WARNING]"
+                        ).strip()
             st.session_state.exit_code = exit_code
             st.session_state.running = False
             st.session_state.process = None
@@ -75,7 +83,9 @@ def stream_process_logs(status_placeholder, log_placeholder) -> None:
         time.sleep(0.2)
 
     render_logs(log_placeholder)
-    if st.session_state.exit_code == 0:
+    if st.session_state.warning_message:
+        status_placeholder.warning(st.session_state.warning_message)
+    elif st.session_state.exit_code == 0:
         status_placeholder.success("Automation completed")
     else:
         status_placeholder.warning(
@@ -128,6 +138,8 @@ if "logs" not in st.session_state:
     st.session_state.logs = []
 if "exit_code" not in st.session_state:
     st.session_state.exit_code = None
+if "warning_message" not in st.session_state:
+    st.session_state.warning_message = ""
 
 start = st.button(
     "Start automation",
@@ -140,11 +152,14 @@ if start:
     st.session_state.process = None
     st.session_state.logs = []
     st.session_state.exit_code = None
+    st.session_state.warning_message = ""
     st.rerun()
 
 status_placeholder = st.empty()
 if st.session_state.running:
     status_placeholder.info("Automation running...")
+elif st.session_state.warning_message:
+    status_placeholder.warning(st.session_state.warning_message)
 elif st.session_state.exit_code == 0:
     status_placeholder.success("Automation completed")
 elif st.session_state.exit_code is not None:

@@ -563,6 +563,20 @@ def _verify_pregen_failure_count_greater_than_zero(page: Page) -> int:
     return pregen_failure_count
 
 
+def _check_remaining_pregen_failure_orders(page: Page) -> int:
+    _go_to_dashboard(page)
+    pregen_failure_count = _status_count(page, "#status_id_3009")
+    if pregen_failure_count > 0:
+        print(
+            "[WARNING] "
+            f"{pregen_failure_count} PreGen Failure order(s) still remain. "
+            "Click Start automation to run again."
+        )
+    else:
+        print("[INFO] No PreGen Failure orders remain.")
+    return pregen_failure_count
+
+
 class LoginFlow:
     def __init__(self, page: Page, config: Any):
         self.page = page
@@ -801,6 +815,9 @@ def run(config: Config) -> None:
                     orders = _collect_order_links(page)
                     for index, order in enumerate(orders, start=1):
                         _process_pregen_failure_order(page, order, index)
+
+                    _check_remaining_pregen_failure_orders(page)
+                    _log_step("Step 23.5: Check remaining PreGen Failure orders")
 
             time.sleep(2)
         finally:

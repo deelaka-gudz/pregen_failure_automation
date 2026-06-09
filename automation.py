@@ -95,13 +95,11 @@ def _fill_first_visible(
     raise RuntimeError(f"Could not find {description}.") from last_error
 
 
-def _click_pregen_failure(page: Page) -> int:
+def _click_pregen_failure(page: Page, allow_empty: bool = False) -> int:
     pregen_failure_count = _status_count(page, "#status_id_3009")
     print(f"[INFO] Initial PreGen Failure count: {pregen_failure_count}")
     if pregen_failure_count <= 0:
-        raise RuntimeError(
-            "PreGen Failure count must be greater than 0 before clicking."
-        )
+        return pregen_failure_count
 
     tile = page.locator(
         ".status.loadthis",
@@ -223,19 +221,19 @@ def _reselect_duplicate_shipping_method(page: Page) -> None:
         select => select.options[select.selectedIndex]?.textContent || ""
         """)
     print(f"[INFO] Existing shipping method: {selected_text.strip()}")
-    shipping_method.first.evaluate("""
+    selected_duplicate = shipping_method.first.evaluate("""
         select => {
             const normalize = value => value
                 .replace(/\\s+/g, " ")
                 .replace(/^[^~]+~\\s*/, "")
                 .trim();
+            const optionGroupLabel = option => option.closest("optgroup")?.label || "";
             const selected = select.options[select.selectedIndex];
             const selectedMethod = normalize(selected?.textContent || selected?.value || "");
             const options = Array.from(select.options);
-            const duplicate = options.find(option => {
-                const group = option.closest("optgroup");
-                return group
-                    && group.label === "All Courier Services"
+            const duplicate = options.find((option, index) => {
+                return optionGroupLabel(option) === "All Courier Services"
+                    && index !== select.selectedIndex
                     && normalize(option.textContent || option.value || "") === selectedMethod;
             });
 
@@ -243,11 +241,27 @@ def _reselect_duplicate_shipping_method(page: Page) -> None:
                 throw new Error(`Could not find duplicate courier service for ${selectedMethod}`);
             }
 
-            select.value = duplicate.value;
+            select.selectedIndex = options.indexOf(duplicate);
             select.dispatchEvent(new Event("input", { bubbles: true }));
             select.dispatchEvent(new Event("change", { bubbles: true }));
+
+            const finalSelected = select.options[select.selectedIndex];
+            const finalGroup = optionGroupLabel(finalSelected);
+            if (finalGroup !== "All Courier Services") {
+                throw new Error(`Shipping method duplicate was not selected. Selected group: ${finalGroup}`);
+            }
+
+            return {
+                text: (finalSelected.textContent || "").replace(/\\s+/g, " ").trim(),
+                group: finalGroup,
+                index: select.selectedIndex,
+            };
         }
         """)
+    print(
+        "[INFO] Selected duplicate shipping method: "
+        f"{selected_duplicate['text']} ({selected_duplicate['group']})"
+    )
     _wait_for_network_idle(page)
 
 
@@ -546,8 +560,6 @@ def _verify_pregen_failure_count_greater_than_zero(page: Page) -> int:
     _go_to_dashboard(page)
     pregen_failure_count = _status_count(page, "#status_id_3009")
     print(f"[INFO] Final PreGen Failure count: {pregen_failure_count}")
-    if pregen_failure_count <= 0:
-        raise RuntimeError("Final PreGen Failure count must be greater than 0.")
     return pregen_failure_count
 
 
@@ -713,7 +725,12 @@ def run(config: Config) -> None:
             login.verify()
             _log_step("Step 1: Login to Helm")
 
-            _click_pregen_failure(page)
+            initial_pregen_failure_count = _click_pregen_failure(
+                page,
+                allow_empty=True,
+            )
+            if initial_pregen_failure_count <= 0:
+                return
             _log_step("Step 2: Click Pregen failure")
 
             _select_all_orders_on_page(page)
@@ -743,10 +760,12 @@ def run(config: Config) -> None:
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
                 page
             )
-            _log_step("Step 11: Verify PreGen Failure count is greater than 0")
+            _log_step("Step 11: Check PreGen Failure count")
 
             if final_pregen_failure_count > 0:
-                _click_pregen_failure(page)
+                remaining_pregen_failure_count = _click_pregen_failure(page)
+                if remaining_pregen_failure_count <= 0:
+                    return
                 _log_step("Step 12: Click Pregen failure")
 
                 _select_all_orders_on_page(page)

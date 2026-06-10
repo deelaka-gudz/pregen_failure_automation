@@ -190,7 +190,14 @@ def _process_pregen_failure_order(
     _open_order_link(page, order)
     _log_step(f"Step 23[{index}]: Open order ID {order['order_id']}")
 
-    _verify_pregen_label_error_exists(page)
+    if not _verify_pregen_label_error_exists(page):
+        print(
+            "[WARNING] "
+            f"Order {order['order_id']} does not show the courier service "
+            "Pregenerated Labels Plugin error. Skipping this order."
+        )
+        _log_step(f"Step 23.1[{index}]: Pregenerated Labels Plugin error not found")
+        return
     _log_step(f"Step 23.1[{index}]: Verify Pregenerated Labels Plugin error")
 
     _reselect_duplicate_shipping_method(page)
@@ -203,15 +210,27 @@ def _process_pregen_failure_order(
     _log_step(f"Step 23.4[{index}]: Select PreGen status")
 
 
-def _verify_pregen_label_error_exists(page: Page) -> None:
+def _verify_pregen_label_error_exists(page: Page) -> bool:
     error_message = (
         "PregenLabel couldn't created by Pregenerated Labels Plugin because "
         "courier service cannot be selected!"
     )
-    page.locator("td", has_text=error_message).first.wait_for(
-        state="visible",
-        timeout=10000,
-    )
+    locators = [
+        page.locator("td", has_text=error_message),
+        page.get_by_text(
+            re.compile(
+                r"PregenLabel couldn't created.*courier service cannot be selected",
+                re.I,
+            )
+        ),
+    ]
+    for locator in locators:
+        try:
+            locator.first.wait_for(state="visible", timeout=5000)
+            return True
+        except (PlaywrightTimeoutError, PlaywrightError):
+            continue
+    return False
 
 
 def _reselect_duplicate_shipping_method(page: Page) -> None:

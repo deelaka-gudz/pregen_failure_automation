@@ -193,15 +193,15 @@ def _process_pregen_failure_order(
     if not _verify_pregen_label_error_exists(page):
         print(
             "[WARNING] "
-            f"Order {order['order_id']} does not show the courier service "
-            "Pregenerated Labels Plugin error. Skipping this order."
+            f"Order {order['order_id']} does not show a Pregenerated Labels "
+            "Plugin error. Skipping this order."
         )
         _log_step(f"Step 23.1[{index}]: Pregenerated Labels Plugin error not found")
         return
     _log_step(f"Step 23.1[{index}]: Verify Pregenerated Labels Plugin error")
 
-    _reselect_duplicate_shipping_method(page)
-    _log_step(f"Step 23.2[{index}]: Reselect duplicate shipping method")
+    _select_royal_mail_tracked_48_with_signature(page)
+    _log_step(f"Step 23.2[{index}]: Select RoyalMail Tracked 48 With Signature")
 
     _click_visible_toggle_or_retry_shipping(page)
     _log_step(f"Step 23.3[{index}]: Click visible toggle button")
@@ -211,15 +211,26 @@ def _process_pregen_failure_order(
 
 
 def _verify_pregen_label_error_exists(page: Page) -> bool:
-    error_message = (
-        "PregenLabel couldn't created by Pregenerated Labels Plugin because "
-        "courier service cannot be selected!"
-    )
     locators = [
-        page.locator("td", has_text=error_message),
         page.get_by_text(
             re.compile(
-                r"PregenLabel couldn't created.*courier service cannot be selected",
+                r"PregenLabel couldn't created by Pregenerated Labels Plugin",
+                re.I,
+            )
+        ),
+        page.get_by_text(
+            re.compile(
+                r"An error has occurred whilst getting the shipping label by "
+                r"Pregenerated Labels Plugin",
+                re.I,
+            )
+        ),
+        page.locator("td").filter(
+            has_text=re.compile(r"Pregenerated Labels Plugin", re.I)
+        ),
+        page.get_by_text(
+            re.compile(
+                r"Pregenerated Labels Plugin.*courier service cannot be selected",
                 re.I,
             )
         ),
@@ -233,41 +244,67 @@ def _verify_pregen_label_error_exists(page: Page) -> bool:
     return False
 
 
-def _reselect_duplicate_shipping_method(page: Page) -> None:
+def _select_royal_mail_tracked_48_with_signature(page: Page) -> None:
     shipping_method = page.locator("select[name='shipping_method_requested']")
     shipping_method.first.wait_for(state="visible", timeout=10000)
     selected_text = shipping_method.first.evaluate("""
         select => select.options[select.selectedIndex]?.textContent || ""
         """)
     print(f"[INFO] Existing shipping method: {selected_text.strip()}")
-    selected_duplicate = shipping_method.first.evaluate("""
-        select => {
+    target_value = "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48)- With Signature"
+    try:
+        shipping_method.first.select_option(value=target_value, timeout=5000)
+    except PlaywrightError:
+        pass
+
+    selected_service = shipping_method.first.evaluate(
+        """
+        (select, targetValue) => {
             const normalize = value => value
                 .replace(/\\s+/g, " ")
-                .replace(/^[^~]+~\\s*/, "")
+                .replace(/[\\u2013\\u2014-]/g, "-")
+                .replace(/\\s*-\\s*/g, "-")
                 .trim();
-            const optionGroupLabel = option => option.closest("optgroup")?.label || "";
-            const selected = select.options[select.selectedIndex];
-            const selectedMethod = normalize(selected?.textContent || selected?.value || "");
+            const target = normalize(
+                "RoyalMailClickAndDrop ~ RMCD Tracked 48 (TPS48) - With Signature"
+            );
             const options = Array.from(select.options);
-            const duplicate = options.find((option, index) => {
-                return optionGroupLabel(option) === "All Courier Services"
-                    && index !== select.selectedIndex
-                    && normalize(option.textContent || option.value || "") === selectedMethod;
+            const option = options.find(item => {
+                const group = item.closest("optgroup");
+                return group
+                    && group.label === "All Courier Services"
+                    && item.value === targetValue;
+            }) || options.find(item => {
+                const group = item.closest("optgroup");
+                return group
+                    && group.label === "All Courier Services"
+                    && normalize(item.textContent || item.value || "") === target;
+            }) || options.find(item => {
+                const group = item.closest("optgroup");
+                const text = normalize(item.textContent || item.value || "");
+                return group
+                    && group.label === "All Courier Services"
+                    && text.includes("RoyalMailClickAndDrop")
+                    && text.includes("RMCD Tracked 48")
+                    && text.includes("TPS48")
+                    && text.includes("With Signature");
             });
 
-            if (!duplicate) {
-                throw new Error(`Could not find duplicate courier service for ${selectedMethod}`);
+            if (!option) {
+                throw new Error(`Could not find courier service: ${target}`);
             }
 
-            select.selectedIndex = options.indexOf(duplicate);
+            select.selectedIndex = options.indexOf(option);
             select.dispatchEvent(new Event("input", { bubbles: true }));
             select.dispatchEvent(new Event("change", { bubbles: true }));
+            if (typeof window.shippingMethodChange === "function") {
+                window.shippingMethodChange(select);
+            }
 
             const finalSelected = select.options[select.selectedIndex];
-            const finalGroup = optionGroupLabel(finalSelected);
+            const finalGroup = finalSelected.closest("optgroup")?.label || "";
             if (finalGroup !== "All Courier Services") {
-                throw new Error(`Shipping method duplicate was not selected. Selected group: ${finalGroup}`);
+                throw new Error(`Courier service was not selected. Selected group: ${finalGroup}`);
             }
 
             return {
@@ -276,12 +313,21 @@ def _reselect_duplicate_shipping_method(page: Page) -> None:
                 index: select.selectedIndex,
             };
         }
-        """)
+        """,
+        target_value,
+    )
     print(
-        "[INFO] Selected duplicate shipping method: "
-        f"{selected_duplicate['text']} ({selected_duplicate['group']})"
+        "[INFO] Selected courier service: "
+        f"{selected_service['text']} ({selected_service['group']})"
     )
     _wait_for_network_idle(page)
+    page.wait_for_timeout(1000)
+    final_value = shipping_method.first.input_value(timeout=5000)
+    if final_value != target_value:
+        raise RuntimeError(
+            "Shipping method did not stay on the With Signature service. "
+            f"Current value: {final_value}"
+        )
 
 
 def _click_visible_toggle_or_retry_shipping(page: Page) -> None:
@@ -294,7 +340,7 @@ def _click_visible_toggle_or_retry_shipping(page: Page) -> None:
     try:
         toggle.first.wait_for(state="visible", timeout=5000)
     except PlaywrightTimeoutError:
-        _reselect_duplicate_shipping_method(page)
+        _select_royal_mail_tracked_48_with_signature(page)
         toggle.first.wait_for(state="visible", timeout=10000)
 
     toggle.first.click(timeout=5000)
@@ -478,16 +524,24 @@ def _set_status_as_pregen(page: Page) -> None:
 
 
 def _go_to_dashboard(page: Page) -> None:
-    try:
-        page.goto(
-            "https://mybeautyandcareltd1.myhelm.app/",
-            wait_until="domcontentloaded",
-            timeout=60000,
-        )
-    except PlaywrightTimeoutError:
-        if page.locator("#status_id_3003").count() == 0:
-            raise
-    _wait_for_network_idle(page)
+    last_error: Optional[Exception] = None
+    for attempt in range(1, 4):
+        try:
+            page.goto(
+                "https://mybeautyandcareltd1.myhelm.app/",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            _wait_for_network_idle(page)
+            return
+        except (PlaywrightTimeoutError, PlaywrightError) as error:
+            last_error = error
+            if page.locator("#status_id_3003").count() > 0:
+                _wait_for_network_idle(page)
+                return
+            print(f"[INFO] Dashboard navigation attempt {attempt} failed; retrying...")
+            page.wait_for_timeout(2000)
+    raise RuntimeError("Could not navigate to dashboard after retries.") from last_error
 
 
 def _click_dashboard_sidebar_link(page: Page) -> None:

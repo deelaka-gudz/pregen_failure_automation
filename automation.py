@@ -1,7 +1,9 @@
 import os
 import re
+import smtplib
 import time
 from dataclasses import dataclass
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -35,6 +37,23 @@ def _log_info(debug: bool, message: str) -> None:
 
 def _log_step(step: str) -> None:
     print(f"[DONE] {step}")
+
+
+def _send_failure_email(config: Any, subject: str, body: str) -> None:
+    if not (config.notify_from and config.notify_to and config.notify_app_password):
+        return
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = config.notify_from
+        msg["To"] = config.notify_to
+        msg.set_content(body)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(config.notify_from, config.notify_app_password)
+            smtp.send_message(msg)
+        print(f"[INFO] Failure notification sent to {config.notify_to}")
+    except Exception as exc:
+        print(f"[WARNING] Could not send notification email: {exc}")
 
 
 def _wait_for_network_idle(page: Page, timeout_ms: int = 10000) -> None:
@@ -636,14 +655,19 @@ def _verify_pregen_failure_count_greater_than_zero(page: Page) -> int:
     return pregen_failure_count
 
 
-def _check_remaining_pregen_failure_orders(page: Page) -> int:
+def _check_remaining_pregen_failure_orders(page: Page, config: Any) -> int:
     _go_to_dashboard(page)
     pregen_failure_count = _status_count(page, "#status_id_3009")
     if pregen_failure_count > 0:
-        print(
-            "[WARNING] "
+        warning = (
             f"{pregen_failure_count} PreGen Failure order(s) still remain. "
             "Click Start automation to run again."
+        )
+        print(f"[WARNING] {warning}")
+        _send_failure_email(
+            config,
+            f"PreGen Failure: {pregen_failure_count} order(s) need manual fix",
+            f"{warning}\n\nPlease log in to Helm and resolve the remaining orders manually.",
         )
     else:
         print("[INFO] No PreGen Failure orders remain.")
@@ -751,9 +775,15 @@ class LoginFlow:
                 break
             self.page.wait_for_timeout(250)
 
-        raise SystemExit(
-            "Login did not complete within the expected time. If credentials are correct, the site may require extra steps (e.g., CAPTCHA/2FA) or the page UI changed."
+        error_msg = (
+            "Login did not complete within the expected time. "
+            "If credentials are correct, the site may require extra steps "
+            "(e.g., CAPTCHA/2FA) or the page UI changed."
         )
+        _send_failure_email(
+            self.config, "PreGen Failure Automation: Login Failed", error_msg
+        )
+        raise SystemExit(error_msg)
 
 
 @dataclass(frozen=True)
@@ -763,6 +793,9 @@ class Config:
     password: str
     headless: bool
     debug: bool
+    notify_from: Optional[str]
+    notify_to: Optional[str]
+    notify_app_password: Optional[str]
 
     @staticmethod
     def load(dotenv_path: Path = DOTENV_PATH) -> "Config":
@@ -778,6 +811,10 @@ class Config:
                 "AUTOMATION_HEADLESS", default=_env_flag("HEADLESS", default=False)
             ),
             debug=_env_flag("DEBUG", default=False),
+            notify_from=os.getenv("NOTIFY_EMAIL_FROM", "").strip() or None,
+            notify_to=os.getenv("NOTIFY_EMAIL_TO", "").strip() or None,
+            notify_app_password=os.getenv("NOTIFY_EMAIL_APP_PASSWORD", "").strip()
+            or None,
         )
 
 
@@ -889,10 +926,15 @@ def run(config: Config) -> None:
                     for index, order in enumerate(orders, start=1):
                         _process_pregen_failure_order(page, order, index)
 
-                    _check_remaining_pregen_failure_orders(page)
+                    _check_remaining_pregen_failure_orders(page, config)
                     _log_step("Step 23.5: Check remaining PreGen Failure orders")
 
             time.sleep(2)
+        except Exception as exc:
+            error_msg = f"PreGen Failure automation stopped unexpectedly:\n{exc}"
+            print(f"[WARNING] {error_msg}")
+            _send_failure_email(config, "PreGen Failure Automation Error", error_msg)
+            raise
         finally:
             try:
                 context.close()

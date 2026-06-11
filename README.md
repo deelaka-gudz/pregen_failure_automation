@@ -23,7 +23,7 @@ DEBUG=false
 ## Run Streamlit App
 
 ```powershell
-.\.venv\Scripts\streamlit.exe run app.py
+.\.venv\Scripts\streamlit.exe run app.py --server.port 8202
 ```
 
 Then open:

@@ -204,16 +204,21 @@ def _open_order_link(page: Page, order: dict[str, str]) -> None:
 
 
 def _process_pregen_failure_order(
-    page: Page, order: dict[str, str], index: int
+    page: Page, order: dict[str, str], index: int, config: Any
 ) -> None:
     _open_order_link(page, order)
     _log_step(f"Step 23[{index}]: Open order ID {order['order_id']}")
 
     if not _verify_pregen_label_error_exists(page):
-        print(
-            "[WARNING] "
+        skip_msg = (
             f"Order {order['order_id']} does not show a Pregenerated Labels "
             "Plugin error. Skipping this order."
+        )
+        print(f"[WARNING] {skip_msg}")
+        _send_failure_email(
+            config,
+            f"PreGen Failure: Order {order['order_id']} skipped — no label error found",
+            f"{skip_msg}\n\nThis order may be in an unexpected state. Please check it manually in Helm.",
         )
         _log_step(f"Step 23.1[{index}]: Pregenerated Labels Plugin error not found")
         return
@@ -840,6 +845,7 @@ def run(config: Config) -> None:
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
+        email_sent = [False]
         try:
             login = LoginFlow(page, config)
             login.open()
@@ -869,7 +875,16 @@ def run(config: Config) -> None:
             _select_evri_24_non_pod_shipping(page)
             _log_step("Step 6: Select EvriCorporate Evri 24 Non POD")
 
-            _submit_bulk_action(page)
+            try:
+                _submit_bulk_action(page)
+            except Exception as exc:
+                msg = f"Pass 1 (Step 7): Bulk action submission failed or timed out: {exc}"
+                print(f"[WARNING] {msg}")
+                _send_failure_email(
+                    config, "PreGen Failure: Bulk Submit Failed (Pass 1 Step 7)", msg
+                )
+                email_sent[0] = True
+                raise
             _log_step("Step 7: Click Submit Action")
 
             _select_all_orders_on_page(page, force_reselect=True)
@@ -878,7 +893,16 @@ def run(config: Config) -> None:
             _set_status_as_pregen(page)
             _log_step("Step 9: Click Set as PreGen")
 
-            _wait_for_pregen_count_zero(page)
+            try:
+                _wait_for_pregen_count_zero(page)
+            except RuntimeError as exc:
+                msg = f"Pass 1 (Step 10): Timed out waiting for PreGen queue to drain: {exc}"
+                print(f"[WARNING] {msg}")
+                _send_failure_email(
+                    config, "PreGen Failure: Queue Timeout (Pass 1 Step 10)", msg
+                )
+                email_sent[0] = True
+                raise
             _log_step("Step 10: Wait until PreGen status count is 0")
 
             final_pregen_failure_count = _verify_pregen_failure_count_greater_than_zero(
@@ -904,7 +928,18 @@ def run(config: Config) -> None:
                 _select_royal_mail_tracked_48_no_signature(page)
                 _log_step("Step 16: Select RoyalMailClickAndDrop RMCD Tracked 48")
 
-                _submit_bulk_action(page)
+                try:
+                    _submit_bulk_action(page)
+                except Exception as exc:
+                    msg = f"Pass 2 (Step 17): Bulk action submission failed or timed out: {exc}"
+                    print(f"[WARNING] {msg}")
+                    _send_failure_email(
+                        config,
+                        "PreGen Failure: Bulk Submit Failed (Pass 2 Step 17)",
+                        msg,
+                    )
+                    email_sent[0] = True
+                    raise
                 _log_step("Step 17: Click Submit Action")
 
                 _select_all_orders_on_page(page, force_reselect=True)
@@ -913,7 +948,16 @@ def run(config: Config) -> None:
                 _set_status_as_pregen(page)
                 _log_step("Step 19: Click Set as PreGen")
 
-                _wait_for_pregen_count_zero(page)
+                try:
+                    _wait_for_pregen_count_zero(page)
+                except RuntimeError as exc:
+                    msg = f"Pass 2 (Step 20): Timed out waiting for PreGen queue to drain: {exc}"
+                    print(f"[WARNING] {msg}")
+                    _send_failure_email(
+                        config, "PreGen Failure: Queue Timeout (Pass 2 Step 20)", msg
+                    )
+                    email_sent[0] = True
+                    raise
                 _log_step("Step 20: Wait until PreGen status count is 0")
 
                 _click_dashboard_sidebar_link(page)
@@ -922,9 +966,31 @@ def run(config: Config) -> None:
                 if _click_pregen_failure_if_count_greater_than_zero(page):
                     _log_step("Step 22: Click Pregen failure")
 
-                    orders = _collect_order_links(page)
+                    try:
+                        orders = _collect_order_links(page)
+                    except RuntimeError as exc:
+                        msg = f"Pass 3 (Step 23): Could not collect order links from the page: {exc}"
+                        print(f"[WARNING] {msg}")
+                        _send_failure_email(
+                            config,
+                            "PreGen Failure: Cannot Collect Orders (Pass 3 Step 23)",
+                            f"{msg}\n\nPlease open Helm and process the remaining PreGen Failure orders manually.",
+                        )
+                        orders = []
                     for index, order in enumerate(orders, start=1):
-                        _process_pregen_failure_order(page, order, index)
+                        try:
+                            _process_pregen_failure_order(page, order, index, config)
+                        except Exception as order_exc:
+                            msg = (
+                                f"Pass 3 (Step 23[{index}]): "
+                                f"Order {order['order_id']} failed: {order_exc}"
+                            )
+                            print(f"[WARNING] {msg}")
+                            _send_failure_email(
+                                config,
+                                f"PreGen Failure: Order {order['order_id']} failed (Pass 3)",
+                                f"{msg}\n\nThis order needs to be resolved manually in Helm.",
+                            )
 
                     _check_remaining_pregen_failure_orders(page, config)
                     _log_step("Step 23.5: Check remaining PreGen Failure orders")
@@ -933,7 +999,10 @@ def run(config: Config) -> None:
         except Exception as exc:
             error_msg = f"PreGen Failure automation stopped unexpectedly:\n{exc}"
             print(f"[WARNING] {error_msg}")
-            _send_failure_email(config, "PreGen Failure Automation Error", error_msg)
+            if not email_sent[0]:
+                _send_failure_email(
+                    config, "PreGen Failure Automation Error", error_msg
+                )
             raise
         finally:
             try:
